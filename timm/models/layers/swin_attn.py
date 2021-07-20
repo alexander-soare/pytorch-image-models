@@ -9,11 +9,13 @@ Swin Transformer paper: https://arxiv.org/pdf/2103.14030.pdf
 from typing import Optional
 
 import torch
+import torch.fx
 import torch.nn as nn
 
 from .drop import DropPath
 from .helpers import to_2tuple
 from .weight_init import trunc_normal_
+from timm.models.fx_helpers import fx_float_to_int
 
 
 def window_partition(x, win_size: int):
@@ -42,7 +44,7 @@ def window_reverse(windows, win_size: int, H: int, W: int):
     Returns:
         x: (B, H, W, C)
     """
-    B = int(windows.shape[0] / (H * W / win_size / win_size))
+    B = fx_float_to_int(windows.shape[0] / (H * W / win_size / win_size))
     x = windows.view(B, H // win_size, W // win_size, win_size, win_size, -1)
     x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, -1)
     return x
@@ -151,7 +153,7 @@ class WindowAttention(nn.Module):
         qkv = qkv.reshape(BW, N, 3, self.num_heads, self.dim_out // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
         q = q * self.scale
-        attn = (q @ k.transpose(-2, -1))
+        attn = torch.matmul(q, k.transpose(-2, -1))
 
         relative_position_bias = self.relative_position_bias_table[
             self.relative_position_index.view(-1)].view(win_size_sq, win_size_sq, -1)
@@ -164,7 +166,7 @@ class WindowAttention(nn.Module):
         attn = self.softmax(attn)
         attn = self.attn_drop(attn)
 
-        x = (attn @ v).transpose(1, 2).reshape(BW, N, self.dim_out)
+        x = torch.matmul(attn, v).transpose(1, 2).reshape(BW, N, self.dim_out)
 
         # merge windows
         x = x.view(-1, self.win_size, self.win_size, self.dim_out)

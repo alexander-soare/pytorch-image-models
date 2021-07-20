@@ -1,3 +1,5 @@
+import torch.fx
+
 from .byoanet import *
 from .byobnet import *
 from .cait import *

@@ -22,10 +22,12 @@ Hacked together by / Copyright 2021 Ross Wightman
 from typing import Tuple, List
 
 import torch
+import torch.fx
 from torch import nn
 import torch.nn.functional as F
 
 from .weight_init import trunc_normal_
+from timm.models.fx_helpers import fx_and
 
 
 def rel_logits_1d(q, rel_k, permute_mask: List[int]):
@@ -43,7 +45,7 @@ def rel_logits_1d(q, rel_k, permute_mask: List[int]):
     rel_size = rel_k.shape[0]
     win_size = (rel_size + 1) // 2
 
-    x = (q @ rel_k.transpose(-1, -2))
+    x = torch.matmul(q, rel_k.transpose(-1, -2))
     x = x.reshape(-1, W, rel_size)
 
     # pad to shift from relative to absolute indexing
@@ -135,7 +137,7 @@ class HaloAttn(nn.Module):
 
     def forward(self, x):
         B, C, H, W = x.shape
-        assert H % self.block_size == 0 and W % self.block_size == 0
+        torch._assert(fx_and(H % self.block_size == 0, W % self.block_size == 0), '')
         num_h_blocks = H // self.block_size
         num_w_blocks = W // self.block_size
         num_blocks = num_h_blocks * num_w_blocks
@@ -153,11 +155,11 @@ class HaloAttn(nn.Module):
             B * self.num_heads, self.dim_head + (self.dim_v // self.num_heads), -1, num_blocks).transpose(1, 3)
         k, v = torch.split(kv, [self.dim_head, self.dim_v // self.num_heads], dim=-1)
 
-        attn_logits = (q @ k.transpose(-1, -2)) * self.scale  # FIXME should usual attn scale be applied?
+        attn_logits = torch.matmul(q, k.transpose(-1, -2)) * self.scale  # FIXME should usual attn scale be applied?
         attn_logits = attn_logits + self.pos_embed(q)  # B * num_heads, block_size ** 2, win_size ** 2
 
         attn_out = attn_logits.softmax(dim=-1)
-        attn_out = (attn_out @ v).transpose(1, 3)  # B * num_heads, dim_v // num_heads, block_size ** 2, num_blocks
+        attn_out = torch.matmul(attn_out, v).transpose(1, 3)  # B * num_heads, dim_v // num_heads, block_size ** 2, num_blocks
         attn_out = F.fold(
             attn_out.reshape(B, -1, num_blocks),
             (H // self.stride, W // self.stride),

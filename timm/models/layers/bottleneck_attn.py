@@ -17,11 +17,13 @@ Hacked together by / Copyright 2021 Ross Wightman
 from typing import List
 
 import torch
+import torch.fx
 import torch.nn as nn
 import torch.nn.functional as F
 
 from .helpers import to_2tuple
 from .weight_init import trunc_normal_
+from timm.models.fx_helpers import fx_and
 
 
 def rel_logits_1d(q, rel_k, permute_mask: List[int]):
@@ -36,7 +38,7 @@ def rel_logits_1d(q, rel_k, permute_mask: List[int]):
         permute_mask: permute output dim according to this
     """
     B, H, W, dim = q.shape
-    x = (q @ rel_k.transpose(-1, -2))
+    x = torch.matmul(q, rel_k.transpose(-1, -2))
     x = x.reshape(-1, W, 2 * W -1)
 
     # pad to shift from relative to absolute indexing
@@ -109,17 +111,17 @@ class BottleneckAttn(nn.Module):
 
     def forward(self, x):
         B, C, H, W = x.shape
-        assert H == self.pos_embed.height and W == self.pos_embed.width
+        torch._assert(fx_and(H == self.pos_embed.height, W == self.pos_embed.width), '')
 
         x = self.qkv(x)  # B, 3 * num_heads * dim_head, H, W
         x = x.reshape(B, -1, self.dim_head, H * W).transpose(-1, -2)
         q, k, v = torch.split(x, self.num_heads, dim=1)
 
-        attn_logits = (q @ k.transpose(-1, -2)) * self.scale
+        attn_logits = torch.matmul(q, k.transpose(-1, -2)) * self.scale
         attn_logits = attn_logits + self.pos_embed(q)  # B, num_heads, H * W, H * W
 
         attn_out = attn_logits.softmax(dim = -1)
-        attn_out = (attn_out @ v).transpose(1, 2).reshape(B, self.dim_out, H, W) # B, dim_out, H, W
+        attn_out = torch.matmul(attn_out, v).transpose(1, 2).reshape(B, self.dim_out, H, W) # B, dim_out, H, W
         attn_out = self.pool(attn_out)
         return attn_out
 

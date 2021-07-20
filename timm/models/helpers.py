@@ -7,6 +7,7 @@ import os
 import math
 from collections import OrderedDict
 from copy import deepcopy
+from timm.models.fx_features import FeatureGraphNet
 from typing import Any, Callable, Optional, Tuple
 
 import torch
@@ -470,6 +471,8 @@ def build_model_with_cfg(
                 feature_cls = feature_cls.lower()
                 if 'hook' in feature_cls:
                     feature_cls = FeatureHookNet
+                elif feature_cls == 'fx':
+                    feature_cls = FeatureGraphNet
                 else:
                     assert False, f'Unknown feature class {feature_cls}'
         model = feature_cls(model, **feature_cfg)
